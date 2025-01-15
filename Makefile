@@ -36,7 +36,7 @@ generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./apis/..."
 
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) $(CRD_OPTIONS) rbac:roleName=manager-role webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(CONTROLLER_GEN) $(CRD_OPTIONS) rbac:roleName=manager-role webhook paths="./pkg/..." output:crd:artifacts:config=config/crd/bases
 
 fmt: go_check ## Run go fmt against code.
 	go fmt $(shell go list ./... | grep -v /vendor/)
@@ -175,6 +175,8 @@ kube-load-image: $(tools/kind)
 # install-kruise install kruise with local build image to kube cluster.
 .PHONY: install-kruise
 install-kruise:
+	kubectl create ns kruise-system
+	kubectl apply -f test/kruise-e2e-config.yaml
 	tools/hack/install-kruise.sh $(IMG)
 
 # run-kruise-e2e-test starts to run kruise e2e tests.

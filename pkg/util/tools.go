@@ -25,7 +25,6 @@ import (
 	"sync"
 
 	"github.com/docker/distribution/reference"
-	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -33,6 +32,8 @@ import (
 	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/integer"
+
+	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 )
 
 // SlowStartBatch tries to call the provided function a total of 'count' times,
@@ -225,6 +226,20 @@ func GetScaledValueFromIntOrPercent(intOrPercent *intstrutil.IntOrString, total 
 		return value, nil
 	}
 	return 0, fmt.Errorf("invalid type: neither int nor percentage")
+}
+
+// ParsePercentageAsFloat64 parses a string as a percentage and returns the value as a float64.
+func ParsePercentageAsFloat64(s string) (float64, error) {
+	if strings.HasSuffix(s, "%") {
+		s = strings.TrimSuffix(s, "%")
+	} else {
+		return 0, fmt.Errorf("invalid type: string is not a percentage")
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v / 100, nil
 }
 
 func EqualIgnoreHash(template1, template2 *corev1.PodTemplateSpec) bool {
