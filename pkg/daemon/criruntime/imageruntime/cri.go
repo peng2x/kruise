@@ -18,19 +18,16 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"time"
 
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
 	daemonutil "github.com/openkruise/kruise/pkg/daemon/util"
 	"github.com/openkruise/kruise/pkg/util/secret"
 
-	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	runtimeapiv1alpha2 "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/kubelet/util"
 	"k8s.io/kubernetes/pkg/util/parsers"
 )
 
@@ -38,35 +35,6 @@ const (
 	maxMsgSize                    = 1024 * 1024 * 16
 	pullingImageSandboxConfigAnno = "apps.kruise.io/pulling-image-by"
 )
-
-// NewCRIImageService create a common CRI runtime
-func NewCRIImageService(runtimeURI string, accountManager daemonutil.ImagePullAccountManager) (ImageService, error) {
-	klog.V(3).InfoS("Connecting to image service", "endpoint", runtimeURI)
-	addr, dialer, err := util.GetAddressAndDialer(runtimeURI)
-	if err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, addr, grpc.WithInsecure(), grpc.WithContextDialer(dialer), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)))
-	if err != nil {
-		klog.ErrorS(err, "Connect remote image service failed", "address", addr)
-		return nil, err
-	}
-
-	imageClientV1, err := determineImageClientAPIVersion(conn)
-	if err != nil {
-		klog.ErrorS(err, "Failed to determine CRI image API version")
-		return nil, err
-	}
-
-	return &commonCRIImageService{
-		accountManager: accountManager,
-		criImageClient: imageClientV1,
-	}, nil
-}
 
 type commonCRIImageService struct {
 	accountManager         daemonutil.ImagePullAccountManager
