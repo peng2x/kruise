@@ -38,10 +38,10 @@ import (
 const (
 	// https://github.com/kubernetes/kubernetes/blob/master/cmd/kubeadm/app/constants/constants_windows.go
 	// criSocketFilePipePath is the prefix of the CRI socket file path
-	criSocketFilePipePath = "npipe:////./pipe/"
+	criSocketFilePipePath = "npipe://./pipe/"
 
 	// CRISocketContainerd is the containerd CRI endpoint
-	criSocketContainerd = "npipe:////./pipe/containerd-containerd"
+	criSocketContainerd = `npipe:\\.\pipe\containerd-containerd`
 
 	// DefaultCRISocket defines the default CRI socket
 	defaultCRISocket = criSocketContainerd
@@ -101,28 +101,13 @@ func NewFactory(varRunPath string, accountManager daemonutil.ImagePullAccountMan
 }
 
 func detectRuntime() (cfgs []runtimeConfig) {
-	var err error
-
-	// firstly check if it is configured from flag
-	if CRISocketFileName != nil && len(*CRISocketFileName) > 0 {
-		filePath := fmt.Sprintf("%s/%s", criSocketFilePipePath, *CRISocketFileName)
-		if _, err = os.Stat(filePath); err == nil {
-			cfgs = append(cfgs, runtimeConfig{
-				runtimeType:      ContainerRuntimeCommonCRI,
-				runtimeRemoteURI: fmt.Sprintf("unix://%s/%s", criSocketFilePipePath, *CRISocketFileName),
-			})
-			klog.InfoS("Find configured CRI socket with given flag", "filePath", filePath)
-		} else {
-			klog.ErrorS(err, "Failed to stat the CRI socket with given flag", "filePath", filePath)
-		}
-		return
+	addr := os.Getenv("CONTAINERD_ADDRESS")
+	if addr == "" {
+		addr = defaultCRISocket
 	}
-
-	// if the flag is not set, then use the default CRI socket
-
 	cfgs = append(cfgs, runtimeConfig{
 		runtimeType:      ContainerRuntimeContainerd,
-		runtimeRemoteURI: defaultCRISocket,
+		runtimeRemoteURI: addr,
 	})
 	return cfgs
 }
