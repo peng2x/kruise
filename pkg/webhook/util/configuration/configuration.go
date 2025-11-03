@@ -181,13 +181,65 @@ func convertClientConfig(clientConfig *admissionregistrationv1.WebhookClientConf
 	clientConfig.Service = nil
 }
 
+// mergeNamespaceSelectors merges two LabelSelectors into one, combining both MatchLabels and MatchExpressions.
+// If either selector is nil, it returns the other. If both are nil, it returns nil.
+func mergeNamespaceSelectors(selector1, selector2 *metav1.LabelSelector) *metav1.LabelSelector {
+	if selector1 == nil && selector2 == nil {
+		return nil
+	}
+	if selector1 == nil {
+		return selector2.DeepCopy()
+	}
+	if selector2 == nil {
+		return selector1.DeepCopy()
+	}
+
+	merged := &metav1.LabelSelector{}
+
+	// Merge MatchLabels
+	if selector1.MatchLabels != nil || selector2.MatchLabels != nil {
+		merged.MatchLabels = make(map[string]string)
+		for k, v := range selector1.MatchLabels {
+			merged.MatchLabels[k] = v
+		}
+		for k, v := range selector2.MatchLabels {
+			merged.MatchLabels[k] = v
+		}
+	}
+
+	// Merge MatchExpressions
+	if selector1.MatchExpressions != nil {
+		merged.MatchExpressions = append(merged.MatchExpressions, selector1.MatchExpressions...)
+	}
+	if selector2.MatchExpressions != nil {
+		merged.MatchExpressions = append(merged.MatchExpressions, selector2.MatchExpressions...)
+	}
+
+	return merged
+}
+
 func parseMutatingTemplate(mutatingConfig *admissionregistrationv1.MutatingWebhookConfiguration) ([]admissionregistrationv1.MutatingWebhook, error) {
 	if templateStr := mutatingConfig.Annotations["template"]; len(templateStr) > 0 {
-		var mutatingWHs []admissionregistrationv1.MutatingWebhook
-		if err := json.Unmarshal([]byte(templateStr), &mutatingWHs); err != nil {
+		var templateWHs []admissionregistrationv1.MutatingWebhook
+		if err := json.Unmarshal([]byte(templateStr), &templateWHs); err != nil {
 			return nil, err
 		}
-		return mutatingWHs, nil
+
+		// Create a map of current webhooks by name for easy lookup
+		currentWHMap := make(map[string]*admissionregistrationv1.MutatingWebhook)
+		for i := range mutatingConfig.Webhooks {
+			currentWHMap[mutatingConfig.Webhooks[i].Name] = &mutatingConfig.Webhooks[i]
+		}
+
+		// Merge NamespaceSelector from both sources for each webhook
+		for i := range templateWHs {
+			wh := &templateWHs[i]
+			if currentWH, exists := currentWHMap[wh.Name]; exists {
+				wh.NamespaceSelector = mergeNamespaceSelectors(wh.NamespaceSelector, currentWH.NamespaceSelector)
+			}
+		}
+
+		return templateWHs, nil
 	}
 
 	templateBytes, err := json.Marshal(mutatingConfig.Webhooks)
@@ -203,11 +255,26 @@ func parseMutatingTemplate(mutatingConfig *admissionregistrationv1.MutatingWebho
 
 func parseValidatingTemplate(validatingConfig *admissionregistrationv1.ValidatingWebhookConfiguration) ([]admissionregistrationv1.ValidatingWebhook, error) {
 	if templateStr := validatingConfig.Annotations["template"]; len(templateStr) > 0 {
-		var validatingWHs []admissionregistrationv1.ValidatingWebhook
-		if err := json.Unmarshal([]byte(templateStr), &validatingWHs); err != nil {
+		var templateWHs []admissionregistrationv1.ValidatingWebhook
+		if err := json.Unmarshal([]byte(templateStr), &templateWHs); err != nil {
 			return nil, err
 		}
-		return validatingWHs, nil
+
+		// Create a map of current webhooks by name for easy lookup
+		currentWHMap := make(map[string]*admissionregistrationv1.ValidatingWebhook)
+		for i := range validatingConfig.Webhooks {
+			currentWHMap[validatingConfig.Webhooks[i].Name] = &validatingConfig.Webhooks[i]
+		}
+
+		// Merge NamespaceSelector from both sources for each webhook
+		for i := range templateWHs {
+			wh := &templateWHs[i]
+			if currentWH, exists := currentWHMap[wh.Name]; exists {
+				wh.NamespaceSelector = mergeNamespaceSelectors(wh.NamespaceSelector, currentWH.NamespaceSelector)
+			}
+		}
+
+		return templateWHs, nil
 	}
 
 	templateBytes, err := json.Marshal(validatingConfig.Webhooks)
