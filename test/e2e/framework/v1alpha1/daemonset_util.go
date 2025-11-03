@@ -22,6 +22,7 @@ import (
 	utilpointer "k8s.io/utils/pointer"
 
 	appsv1alpha1 "github.com/openkruise/kruise/apis/apps/v1alpha1"
+	appsv1beta1 "github.com/openkruise/kruise/apis/apps/v1beta1"
 	kruiseclientset "github.com/openkruise/kruise/pkg/client/clientset/versioned"
 	"github.com/openkruise/kruise/pkg/controller/daemonset"
 	"github.com/openkruise/kruise/test/e2e/framework/common"
@@ -356,7 +357,13 @@ func (t *DaemonSetTester) WaitFailedDaemonPodDeleted(pod *v1.Pod) func() (bool, 
 }
 
 func (t *DaemonSetTester) CanScheduleOnNode(node v1.Node, ds *appsv1alpha1.DaemonSet) bool {
-	newPod := daemonset.NewPod(ds, node.Name)
+	// Convert v1alpha1 to v1beta1 for NewPod function
+	v1beta1DS := &appsv1beta1.DaemonSet{}
+	if err := ds.ConvertTo(v1beta1DS); err != nil {
+		common.Logf("Failed to convert v1alpha1 DaemonSet to v1beta1: %v", err)
+		return false
+	}
+	newPod := daemonset.NewPod(v1beta1DS, node.Name)
 	taints := node.Spec.Taints
 	fitsNodeName, fitsNodeAffinity, fitsTaints := daemonset.Predicates(newPod, &node, taints)
 	if !fitsNodeName || !fitsNodeAffinity || !fitsTaints {

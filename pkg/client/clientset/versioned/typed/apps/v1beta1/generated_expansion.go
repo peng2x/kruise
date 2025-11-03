@@ -21,6 +21,8 @@ type AdvancedCronJobExpansion interface{}
 
 type BroadcastJobExpansion interface{}
 
+type DaemonSetExpansion interface{}
+
 type ImageListPullJobExpansion interface{}
 
 type ImagePullJobExpansion interface{}
