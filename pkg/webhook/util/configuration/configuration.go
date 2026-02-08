@@ -145,27 +145,21 @@ func Ensure(kubeClient clientset.Interface, handlers map[string]types.HandlerGet
 	validatingConfig.Webhooks = validatingWHs
 
 	if !AreSemanticEqualMutatingWebhooks(mutatingConfig, oldMutatingConfig) {
-		klog.V(3).InfoS("MutatingWebhookConfiguration has changes, updating",
-			"config", mutatingConfig.Name, "webhooks", len(mutatingConfig.Webhooks))
 		if _, err := kubeClient.AdmissionregistrationV1().MutatingWebhookConfigurations().Update(context.TODO(), mutatingConfig, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("failed to update %s: %v", mutatingWebhookConfigurationName, err)
 		}
 		klog.InfoS("Update caBundle success", "MutatingWebhookConfigurations", klog.KObj(mutatingConfig))
 	} else {
-		klog.V(4).InfoS("MutatingWebhookConfiguration is semantically equal, skipping update",
-			"config", mutatingConfig.Name)
+		klog.V(5).InfoS("MutatingWebhookConfiguration unchanged, skipping update", "config", mutatingConfig.Name)
 	}
 
 	if !AreSemanticEqualValidatingWebhooks(validatingConfig, oldValidatingConfig) {
-		klog.V(3).InfoS("ValidatingWebhookConfiguration has changes, updating",
-			"config", validatingConfig.Name, "webhooks", len(validatingConfig.Webhooks))
 		if _, err := kubeClient.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(context.TODO(), validatingConfig, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("failed to update %s: %v", validatingWebhookConfigurationName, err)
 		}
 		klog.InfoS("Update caBundle success", "ValidatingWebhookConfigurations", klog.KObj(validatingConfig))
 	} else {
-		klog.V(4).InfoS("ValidatingWebhookConfiguration is semantically equal, skipping update",
-			"config", validatingConfig.Name)
+		klog.V(5).InfoS("ValidatingWebhookConfiguration unchanged, skipping update", "config", validatingConfig.Name)
 	}
 
 	return nil
