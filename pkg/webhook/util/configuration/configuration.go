@@ -146,17 +146,27 @@ func Ensure(kubeClient clientset.Interface, handlers map[string]types.HandlerGet
 	validatingConfig.Webhooks = validatingWHs
 
 	if !AreSemanticEqualMutatingWebhooks(mutatingConfig, oldMutatingConfig) {
+		klog.V(3).InfoS("MutatingWebhookConfiguration has changes, updating",
+			"config", mutatingConfig.Name, "webhooks", len(mutatingConfig.Webhooks))
 		if _, err := kubeClient.AdmissionregistrationV1().MutatingWebhookConfigurations().Update(context.TODO(), mutatingConfig, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("failed to update %s: %v", mutatingWebhookConfigurationName, err)
 		}
 		klog.InfoS("Update caBundle success", "MutatingWebhookConfigurations", klog.KObj(mutatingConfig))
+	} else {
+		klog.V(4).InfoS("MutatingWebhookConfiguration is semantically equal, skipping update",
+			"config", mutatingConfig.Name)
 	}
 
 	if !AreSemanticEqualValidatingWebhooks(validatingConfig, oldValidatingConfig) {
+		klog.V(3).InfoS("ValidatingWebhookConfiguration has changes, updating",
+			"config", validatingConfig.Name, "webhooks", len(validatingConfig.Webhooks))
 		if _, err := kubeClient.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(context.TODO(), validatingConfig, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("failed to update %s: %v", validatingWebhookConfigurationName, err)
 		}
 		klog.InfoS("Update caBundle success", "ValidatingWebhookConfigurations", klog.KObj(validatingConfig))
+	} else {
+		klog.V(4).InfoS("ValidatingWebhookConfiguration is semantically equal, skipping update",
+			"config", validatingConfig.Name)
 	}
 
 	return nil
@@ -295,17 +305,28 @@ func mergeNamespaceSelectors(selector1, selector2 *metav1.LabelSelector) (*metav
 	// Deduplicate and check for conflicts in MatchExpressions
 	if selector2.MatchExpressions != nil {
 		// Add expressions from selector2, but skip duplicates
+		duplicateCount := 0
+		addedCount := 0
 		for _, expr2 := range selector2.MatchExpressions {
 			isDuplicate := false
 			for _, expr1 := range merged.MatchExpressions {
 				if isEqualExpression(expr1, expr2) {
 					isDuplicate = true
+					duplicateCount++
+					klog.V(5).InfoS("Skipping duplicate MatchExpression during merge",
+						"key", expr2.Key, "operator", expr2.Operator, "values", expr2.Values)
 					break
 				}
 			}
 			if !isDuplicate {
 				merged.MatchExpressions = append(merged.MatchExpressions, expr2)
+				addedCount++
+				klog.V(5).InfoS("Adding MatchExpression during merge",
+					"key", expr2.Key, "operator", expr2.Operator, "values", expr2.Values)
 			}
+		}
+		if duplicateCount > 0 || addedCount > 0 {
+			klog.V(4).InfoS("Merged MatchExpressions", "added", addedCount, "duplicatesSkipped", duplicateCount)
 		}
 	}
 
@@ -393,6 +414,9 @@ func validateExpressionsForKey(key string, expressions []metav1.LabelSelectorReq
 
 func parseMutatingTemplate(mutatingConfig *admissionregistrationv1.MutatingWebhookConfiguration) ([]admissionregistrationv1.MutatingWebhook, error) {
 	if templateStr := mutatingConfig.Annotations["template"]; len(templateStr) > 0 {
+		klog.V(4).InfoS("Found existing template annotation for MutatingWebhookConfiguration",
+			"config", mutatingConfig.Name, "webhooks", len(mutatingConfig.Webhooks))
+
 		var templateWHs []admissionregistrationv1.MutatingWebhook
 		if err := json.Unmarshal([]byte(templateStr), &templateWHs); err != nil {
 			return nil, err
@@ -404,20 +428,53 @@ func parseMutatingTemplate(mutatingConfig *admissionregistrationv1.MutatingWebho
 			currentWHMap[mutatingConfig.Webhooks[i].Name] = &mutatingConfig.Webhooks[i]
 		}
 
+		// Track if any merges occurred
+		mergeOccurred := false
+
 		// Merge NamespaceSelector from both sources for each webhook
 		for i := range templateWHs {
 			wh := &templateWHs[i]
 			if currentWH, exists := currentWHMap[wh.Name]; exists {
+				klog.V(4).InfoS("Merging NamespaceSelector for MutatingWebhook", "webhook", wh.Name,
+					"templateSelector", wh.NamespaceSelector, "currentSelector", currentWH.NamespaceSelector)
+
 				merged, err := mergeNamespaceSelectors(wh.NamespaceSelector, currentWH.NamespaceSelector)
 				if err != nil {
 					return nil, fmt.Errorf("failed to merge NamespaceSelector for webhook %q: %w", wh.Name, err)
 				}
-				wh.NamespaceSelector = merged
+
+				// Check if merge actually changed anything
+				if !equality.Semantic.DeepEqual(wh.NamespaceSelector, merged) {
+					klog.V(3).InfoS("NamespaceSelector changed after merge for MutatingWebhook",
+						"webhook", wh.Name, "before", wh.NamespaceSelector, "after", merged)
+					wh.NamespaceSelector = merged
+					mergeOccurred = true
+				} else {
+					klog.V(4).InfoS("No changes after merge for MutatingWebhook", "webhook", wh.Name)
+				}
 			}
+		}
+
+		// Update the template annotation with merged result to avoid re-merging on next reconciliation
+		if mergeOccurred {
+			klog.V(3).InfoS("Updating template annotation for MutatingWebhookConfiguration after merge",
+				"config", mutatingConfig.Name)
+			templateBytes, err := json.Marshal(templateWHs)
+			if err != nil {
+				return nil, err
+			}
+			mutatingConfig.Annotations["template"] = string(templateBytes)
+		} else {
+			klog.V(4).InfoS("No merge occurred for MutatingWebhookConfiguration, template annotation unchanged",
+				"config", mutatingConfig.Name)
 		}
 
 		return templateWHs, nil
 	}
+
+	// No template annotation exists - this is the first time, create it
+	klog.V(3).InfoS("Template annotation not found for MutatingWebhookConfiguration, creating initial template",
+		"config", mutatingConfig.Name, "webhooks", len(mutatingConfig.Webhooks))
 
 	templateBytes, err := json.Marshal(mutatingConfig.Webhooks)
 	if err != nil {
@@ -432,6 +489,9 @@ func parseMutatingTemplate(mutatingConfig *admissionregistrationv1.MutatingWebho
 
 func parseValidatingTemplate(validatingConfig *admissionregistrationv1.ValidatingWebhookConfiguration) ([]admissionregistrationv1.ValidatingWebhook, error) {
 	if templateStr := validatingConfig.Annotations["template"]; len(templateStr) > 0 {
+		klog.V(4).InfoS("Found existing template annotation for ValidatingWebhookConfiguration",
+			"config", validatingConfig.Name, "webhooks", len(validatingConfig.Webhooks))
+
 		var templateWHs []admissionregistrationv1.ValidatingWebhook
 		if err := json.Unmarshal([]byte(templateStr), &templateWHs); err != nil {
 			return nil, err
@@ -443,20 +503,53 @@ func parseValidatingTemplate(validatingConfig *admissionregistrationv1.Validatin
 			currentWHMap[validatingConfig.Webhooks[i].Name] = &validatingConfig.Webhooks[i]
 		}
 
+		// Track if any merges occurred
+		mergeOccurred := false
+
 		// Merge NamespaceSelector from both sources for each webhook
 		for i := range templateWHs {
 			wh := &templateWHs[i]
 			if currentWH, exists := currentWHMap[wh.Name]; exists {
+				klog.V(4).InfoS("Merging NamespaceSelector for ValidatingWebhook", "webhook", wh.Name,
+					"templateSelector", wh.NamespaceSelector, "currentSelector", currentWH.NamespaceSelector)
+
 				merged, err := mergeNamespaceSelectors(wh.NamespaceSelector, currentWH.NamespaceSelector)
 				if err != nil {
 					return nil, fmt.Errorf("failed to merge NamespaceSelector for webhook %q: %w", wh.Name, err)
 				}
-				wh.NamespaceSelector = merged
+
+				// Check if merge actually changed anything
+				if !equality.Semantic.DeepEqual(wh.NamespaceSelector, merged) {
+					klog.V(3).InfoS("NamespaceSelector changed after merge for ValidatingWebhook",
+						"webhook", wh.Name, "before", wh.NamespaceSelector, "after", merged)
+					wh.NamespaceSelector = merged
+					mergeOccurred = true
+				} else {
+					klog.V(4).InfoS("No changes after merge for ValidatingWebhook", "webhook", wh.Name)
+				}
 			}
+		}
+
+		// Update the template annotation with merged result to avoid re-merging on next reconciliation
+		if mergeOccurred {
+			klog.V(3).InfoS("Updating template annotation for ValidatingWebhookConfiguration after merge",
+				"config", validatingConfig.Name)
+			templateBytes, err := json.Marshal(templateWHs)
+			if err != nil {
+				return nil, err
+			}
+			validatingConfig.Annotations["template"] = string(templateBytes)
+		} else {
+			klog.V(4).InfoS("No merge occurred for ValidatingWebhookConfiguration, template annotation unchanged",
+				"config", validatingConfig.Name)
 		}
 
 		return templateWHs, nil
 	}
+
+	// No template annotation exists - this is the first time, create it
+	klog.V(3).InfoS("Template annotation not found for ValidatingWebhookConfiguration, creating initial template",
+		"config", validatingConfig.Name, "webhooks", len(validatingConfig.Webhooks))
 
 	templateBytes, err := json.Marshal(validatingConfig.Webhooks)
 	if err != nil {
