@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "2"
+    meta.helm.sh/release-name: kruise
+    meta.helm.sh/release-namespace: kruise-system
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    control-plane: controller-manager
+  name: kruise-controller-manager
+  namespace: kruise-system
+spec:
+  minReadySeconds: 3
+  progressDeadlineSeconds: 600
+  replicas: 2
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+  strategy:
+    rollingUpdate:
+      maxSurge: 100%
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        control-plane: controller-manager
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: control-plane
+                  operator: In
+                  values:
+                  - controller-manager
+              topologyKey: kubernetes.io/hostname
+            weight: 100
+      containers:
+      - args:
+        - --enable-leader-election
+        - --metrics-addr=:8080
+        - --health-probe-addr=:8000
+        - --logtostderr=true
+        - --leader-election-namespace=kruise-system
+        - --v=5
+        - --feature-gates=ImagePullJobGate=false
+        - --sync-period=0
+        command:
+        - /manager
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: WEBHOOK_PORT
+          value: "9876"
+        #image: pengpeng.azurecr.io/openkruise/kruise-manager:v1.8.2-amd64
+        image: pengpeng.azurecr.io/openkruise/kruise-manager:v20260207-amd64-2
+        imagePullPolicy: Always
+        name: manager
+        ports:
+        - containerPort: 9876
+          name: webhook-server
+          protocol: TCP
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        - containerPort: 8000
+          name: health
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: readyz
+            port: 8000
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: 200m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            add:
+            - NET_BIND_SERVICE
+            drop:
+            - all
+          runAsNonRoot: true
+          runAsUser: 65534
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: kruise-manager
+      serviceAccountName: kruise-manager
+      terminationGracePeriodSeconds: 10
+      topologySpreadConstraints:
+      - labelSelector:
+          matchLabels:
+            control-plane: controller-manager
+        matchLabelKeys:
+        - pod-template-hash
+        maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
